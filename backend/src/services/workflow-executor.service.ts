@@ -402,7 +402,7 @@ class WorkflowExecutorService extends EventEmitter {
       this.markSkippedNodes(runtime);
       this.startReadyNodes(runtime);
 
-      if (runtime.running.size === 0) {
+      if (runtime.running.size === 0) { 
         const pendingCount = Object.values(execution.nodeStates)
           .filter((state) => !TERMINAL_NODE_STATUSES.has(state.status))
           .length;
@@ -1449,5 +1449,5 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export const workflowExecutor = new WorkflowExecutorService();
+export const  workflowExecutor = new WorkflowExecutorService();
 export default workflowExecutor;

@@ -851,40 +851,66 @@ export async function generateWorkflowDslFromPrompt(
 }
 
 export interface StartWorkflowExecutionRequest {
+  // 要执行的工作流 DSL；WorkflowDsl 是一个结构化对象类型。
   workflowDsl: WorkflowDsl;
+  // 用户提交的任务文本。
   task: string;
+  // ? 表示该字段可选，调用方可以不传 architectureId。
   architectureId?: string;
+  // 当前项目 id；同样是可选字段。
   projectId?: string;
+  // 是否只做演练而不真正执行；可选的布尔字段。
   dryRun?: boolean;
 }
 
+// 将“启动工作流”的前端调用封装成一个可复用函数。
+// async 函数的返回类型写成 Promise<WorkflowExecution>，表示最终会得到一个执行记录。
 export async function startWorkflowExecution(
+  // data 是函数参数，类型是上面的请求对象接口。
   data: StartWorkflowExecutionRequest
 ): Promise<WorkflowExecution> {
+  // 组装 HTTP 请求头。
   const headers = {
+    // ... 是对象展开，把认证相关字段复制到新对象中。
     ...getAuthHeaders(),
+    // 告诉后端请求体使用 JSON 格式。
     'Content-Type': 'application/json',
   };
+  // fetch 发起 HTTP 请求；await 等待响应头和响应对象返回。
   const res = await fetch(`${API_BASE}/api/workflows/execute`, {
+    // method 指定 HTTP 方法。
     method: 'POST',
+    // 把刚才组装的请求头传给 fetch。
     headers,
+    // JSON.stringify 把 JavaScript 对象序列化成 JSON 字符串。
     body: JSON.stringify(data),
   });
+  // 解析响应体；如果响应不是合法 JSON，就用空对象 {} 兜底。
+  // .catch(() => ({})) 中的箭头函数表示“解析失败时返回空对象”。
   const payload = await res.json().catch(() => ({}));
+  // res.ok 为 false 时表示 HTTP 状态码不是成功范围。
   if (!res.ok) {
+    // || 表示左侧为空值时使用右侧的默认错误文案。
     throw new Error(payload.message || '启动 Workflow 执行失败');
   }
+  // 返回后端响应中的 execution 字段，而不是返回整个响应对象。
   return payload.execution;
 }
 
 export async function fetchWorkflowExecution(executionId: string): Promise<WorkflowExecution> {
+  // 根据执行 id 向后端查询最新执行状态。
   const res = await fetch(`${API_BASE}/api/workflows/executions/${executionId}`, {
+    // 查询接口仍然需要携带认证信息。
     headers: getAuthHeaders(),
   });
+  // 解析后端 JSON；解析失败时用空对象兜底。
   const payload = await res.json().catch(() => ({}));
+  // 非成功 HTTP 状态码统一转成前端异常。
   if (!res.ok) {
+    // 优先使用后端返回的 message，没有时使用默认提示。
     throw new Error(payload.message || '获取 Workflow 执行状态失败');
   }
+  // 只返回业务数据中的 execution 字段。
   return payload.execution;
 }
 

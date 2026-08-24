@@ -86,6 +86,8 @@ app.use('/api/market', marketRoutes);
 app.use('/api/social', socialRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/providers', providersRoutes);
+// 挂载工作流路由：这里的前缀会和 router.post('/execute') 拼成
+// POST /api/workflows/execute。
 app.use('/api/workflows', workflowsRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/architectures', architecturesRoutes);

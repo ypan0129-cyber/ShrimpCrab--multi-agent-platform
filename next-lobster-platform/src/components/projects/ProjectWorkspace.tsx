@@ -484,77 +484,134 @@ export function ProjectWorkspace({
     }
   };
 
+  // 定义“提交团队任务”的异步函数；async 表示函数会返回 Promise。
   const submitChat = async () => {
+    // 读取输入框内容，并用 trim 去掉首尾空白。
     const task = chatDraft.trim();
+    // 如果任务为空、已有任务正在提交，或当前没有会话，就直接结束函数。
+    // ! 是逻辑非；这里的多个条件使用 || 表示“任意一个成立即可返回”。
     if (!task || isSubmitting || !activeSession) return;
+    // 保存当前会话的 id，后面追加消息时要明确写入哪个会话。
     const sessionId = activeSession.id;
+    // 清空输入框；React 的 setState 函数会触发界面更新。
     setChatDraft('');
+    // 先把用户自己的消息追加到当前会话中，让界面立即显示出来。
+    // makeMessage(...) 创建消息对象，appendMessage(...) 把对象写入消息状态。
     appendMessage(activeTargetKey, sessionId, makeMessage('user', task));
 
+    // 如果当前是单 Agent 模式，这条任务不走团队工作流。
     if (activeMode === 'agent') {
+      // 追加一条系统提示，告诉用户应该进入单 Agent 页面。
       appendMessage(
+        // 第一个参数是当前目标的 key。
         activeTargetKey,
+        // 第二个参数是当前会话 id。
         sessionId,
+        // 第三个参数是要展示的消息对象；?. 是可选链，activeAgent 为空时不会报错。
         makeMessage('system', '单 Agent 模式已绑定到当前项目。请点击上方“打开 Agent”进入单 Agent 对话。', activeAgent?.name)
       );
+      // 单 Agent 模式已经处理完毕，不再继续执行下面的团队流程。
       return;
     }
 
+    // 团队模式必须同时有当前团队和可执行的 Workflow DSL。
     if (!activeTeam || !activeDsl) {
+      // 缺少任一条件时，给用户写入错误消息。
       appendMessage(activeTargetKey, sessionId, makeMessage('error', '当前项目还没有绑定可执行的团队。请先在协作模式里绑定团队。'));
+      // 这里 return 是提前返回，避免向后端发送不完整请求。
       return;
     }
 
+    // 设置“提交中”状态，通常用于禁用按钮或显示加载状态。
     setIsSubmitting(true);
+    // try/catch/finally 用于保证请求成功、失败、结束时分别执行对应逻辑。
     try {
+      // 将用户任务和安全约束拼成一个最终任务字符串。
+      // 数组字面量 [...] 创建字符串数组，join('\n') 用换行符连接数组元素。
       const guardedTask = [
+        // 第一段是用户原始任务。
         task,
+        // 第二段是空行，用于把任务和安全说明视觉分隔开。
         '',
+        // 第三段是传给 Agent 的工作区安全边界。
         '安全边界：只允许读取和修改当前项目工作区内的文件；不要访问父目录、绝对路径、系统目录，也不要执行删除、格式化、权限修改等高危操作。',
+      // 末尾的逗号是尾随逗号，TypeScript/JavaScript 允许它存在。
       ].join('\n');
+      // 调用前端 API 封装，并等待 HTTP 请求完成。
+      // await 只暂停当前 async 函数，不会阻塞整个浏览器线程。
       const started = await startWorkflowExecution({
+        // 对象字面量：把当前 DSL 放入请求对象的 workflowDsl 字段。
         workflowDsl: activeDsl,
+        // 把拼接过安全边界的任务放入 task 字段。
         task: guardedTask,
+        // 使用当前团队 id，后端据此确定协作架构。
         architectureId: activeTeam.id,
+        // 使用当前项目 id，后端据此确定项目工作区。
         projectId: project.id,
       });
+      // 请求成功后，保存后端返回的执行快照。
       setLatestExecution(started);
+      // 在前端 ref 中记录“执行 id 对应哪个会话”。
+      // current 是 ref 对象；.current 取出它当前保存的可变值。
       executionSessionRef.current[started.id] = { teamKey: activeTargetKey, sessionId };
+      // 记录当前正在轮询的执行 id。
       activePollingExecutionRef.current = started.id;
+      // 立即在聊天界面提示用户：任务已经提交，并展示执行编号。
       appendMessage(activeTargetKey, sessionId, makeMessage('system', `已提交给「${activeTeam.name}」，执行编号：${started.id}`));
 
+      // current 保存本地看到的最新执行状态，后续轮询会不断更新它。
       let current = started;
+      // 连续轮询失败次数；成功获取一次状态后会清零。
       let consecutivePollErrors = 0;
+      // 根据 DSL 计算最多轮询多少次，避免前端无限等待。
       const maxPollAttempts = getWorkflowPollAttemptLimit(activeDsl);
+      // for 的三部分分别是初始化、继续条件、每轮结束后的递增。
+      // attempt += 1 等价于 attempt = attempt + 1。
       for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
+        // 如果已经到达终态，就停止继续轮询。
         if (TERMINAL_STATUSES.includes(current.status)) break;
-        // WS connected: events stream in real time, polling is just a safety net
+        // WebSocket 已连接时降低轮询频率；否则使用普通轮询间隔。
         await sleep(wsConnectedRef.current ? WORKFLOW_POLL_FALLBACK_INTERVAL_MS : WORKFLOW_POLL_INTERVAL_MS);
+        // 单次轮询也可能失败，所以这里单独捕获轮询异常。
         try {
+          // 根据执行 id 请求后端最新状态；await 得到 Promise 完成后的结果。
           current = await fetchWorkflowExecution(started.id);
+          // 成功拿到状态，连续失败次数清零。
           consecutivePollErrors = 0;
+          // 没有 WebSocket 时，才用轮询结果刷新界面。
           if (!wsConnectedRef.current) {
             setLatestExecution(current);
           }
         } catch (pollError) {
+          // 本次轮询失败，连续失败次数加一。
           consecutivePollErrors += 1;
+          // 连续失败达到上限时，抛出异常交给外层 catch 处理。
           if (consecutivePollErrors >= WORKFLOW_MAX_CONSECUTIVE_POLL_ERRORS) {
+            // instanceof 用来判断值是否是 Error 实例；否则退化为 String(error)。
             const message = pollError instanceof Error ? pollError.message : String(pollError);
+            // throw 会中断当前流程，并跳转到外层 catch。
             throw new Error(`团队任务仍在后台运行，但连续多次无法获取进度：${message}`);
           }
+          // 暂时失败时，等待一个递增的重试延迟后再继续循环。
           await sleep(getWorkflowPollRetryDelay(consecutivePollErrors));
         }
       }
+      // 根据最终状态选择聊天消息角色。
+      // ?: 是条件运算符，格式为“条件 ? 条件成立的值 : 条件不成立的值”。
       const replyRole: ChatRole = current.status === 'failed' || executionHasLlmFailureOutput(current) || executionHasDryRunOutput(current)
         ? 'error'
         : TERMINAL_STATUSES.includes(current.status)
           ? 'assistant'
           : 'system';
+      // 将执行结果转换成聊天消息，并追加到当前会话。
       appendMessage(activeTargetKey, sessionId, makeMessage(replyRole, buildExecutionReply(current), activeTeam.name));
     } catch (error) {
+      // 捕获提交请求、轮询或结果处理阶段的异常，并显示给用户。
       appendMessage(activeTargetKey, sessionId, makeMessage('error', error instanceof Error ? error.message : '执行任务失败'));
     } finally {
+      // 无论成功还是失败，都清除当前轮询 id。
       activePollingExecutionRef.current = null;
+      // 无论成功还是失败，都结束“提交中”状态。
       setIsSubmitting(false);
     }
   };
